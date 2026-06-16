@@ -18,9 +18,10 @@ export interface CostNode {
   children: CostNode[];
 }
 
-// 1. Fetch KPI Header Cards (Fixed Revenue Leaf Logic)
+///////////////////////////////
+// 1. DASHBOARD METRICS
+///////////////////////////////
 export async function getDashboardMetrics(projectId: string = '1') {
-  // Query only items that are actual leaf entries (have qty and rate)
   const [projectRows] = await pool.query<RowDataPacket[]>(`
     SELECT COALESCE(SUM(bi.qty * bi.rate), 0) AS project_value
     FROM projects p
@@ -46,12 +47,11 @@ export async function getDashboardMetrics(projectId: string = '1') {
   });
 
   const revenue = Number(projectRows[0]?.project_value || 0);
-  const actualCost = paidSubtotal * 1.05; // Fixed 5% VAT adjustment
+  const actualCost = paidSubtotal * 1.05;
   const committedCost = unpaidSubtotal * 1.05;
   const totalExpenses = actualCost + committedCost;
   const runningPnL = revenue - totalExpenses;
   const profitMargin = revenue > 0 ? (runningPnL / revenue) * 100 : 0;
-  
 
   return {
     revenue,
@@ -63,12 +63,13 @@ export async function getDashboardMetrics(projectId: string = '1') {
   };
 }
 
-// 2. Fetch Material Requests with Dynamic Filters & Budget Overrun Injection
+///////////////////////////////
+// 2. MATERIAL REQUESTS
+///////////////////////////////
 export async function getMaterialRequests(
   projectId: string = '1',
   filters: any = {}
 ) {
-
   let query = `
 SELECT 
   mr.id,
@@ -90,14 +91,13 @@ SELECT
     FROM mr_line_items li2
     JOIN boq_items bi ON li2.boq_item_id = bi.id
     WHERE li2.mr_id = mr.id
-      AND (li2.qty * li2.unit_price) > (bi.qty * bi.rate)
+    HAVING SUM(li2.qty * li2.unit_price) > SUM(bi.qty * bi.rate)
   ) AS is_overrun
 
 FROM material_requests mr
 JOIN requestors r ON mr.requestor_id = r.id
 JOIN suppliers s ON mr.supplier_id = s.id
 
-/* aggregated line items */
 LEFT JOIN (
   SELECT 
     mr_id,
@@ -106,7 +106,6 @@ LEFT JOIN (
   GROUP BY mr_id
 ) li_data ON li_data.mr_id = mr.id
 
-/* aggregated tags */
 LEFT JOIN (
   SELECT 
     mt.mr_id,
@@ -133,8 +132,8 @@ WHERE mr.project_id = ?
 
   if (filters.searchQuery) {
     query += ` AND (mr.mr_number LIKE ? OR r.name LIKE ? OR mr.purpose LIKE ?)`;
-    const searchWildcard = `%${filters.searchQuery}%`;
-    params.push(searchWildcard, searchWildcard, searchWildcard);
+    const s = `%${filters.searchQuery}%`;
+    params.push(s, s, s);
   }
 
   query += ` ORDER BY mr.created_at DESC`;
@@ -142,7 +141,9 @@ WHERE mr.project_id = ?
   const [mrs] = await pool.query<RowDataPacket[]>(query, params);
 
   return mrs.map((mr) => {
-    const assignedTags = mr.tag_list ? mr.tag_list.split(',') : [];
+    const assignedTags = mr.tag_list
+      ? mr.tag_list.split(',').filter(Boolean)
+      : [];
 
     if (mr.is_overrun && !assignedTags.includes('Budget overrun')) {
       assignedTags.push('Budget overrun');
@@ -164,9 +165,11 @@ WHERE mr.project_id = ?
     };
   });
 }
-// 3. Fetch Selected Material Request Details (Optimized: Removed N+1 Query loop)
-export async function getMRPreviewDetails(mrId: number) {
 
+///////////////////////////////
+// 3. MR PREVIEW
+///////////////////////////////
+export async function getMRPreviewDetails(mrId: number) {
   const [mrMeta] = await pool.query<RowDataPacket[]>(`
     SELECT 
       mr.mr_number,
@@ -190,7 +193,6 @@ export async function getMRPreviewDetails(mrId: number) {
       (li.qty * li.unit_price) AS total_price,
       bi.ref_code AS boq_ref,
 
-      -- safer + faster aggregation (no window function duplication)
       (
         SELECT MIN(price)
         FROM price_history ph
@@ -216,7 +218,6 @@ export async function getMRPreviewDetails(mrId: number) {
     JOIN material_requests mr ON li.mr_id = mr.id
     JOIN materials m ON li.material_id = m.id
     JOIN boq_items bi ON li.boq_item_id = bi.id
-
     WHERE li.mr_id = ?
   `, [mrId]);
 
@@ -228,7 +229,6 @@ export async function getMRPreviewDetails(mrId: number) {
     unit_price: Number(item.unit_price),
     total_price: Number(item.total_price),
     boq_ref: item.boq_ref,
-
     lowest: item.lowest_price ? `AED ${Number(item.lowest_price).toFixed(2)}` : 'N/A',
     avg: item.avg_price ? `AED ${Number(item.avg_price).toFixed(2)}` : 'N/A',
     prev: item.prev_price ? `AED ${Number(item.prev_price).toFixed(2)}` : 'N/A',
@@ -246,16 +246,28 @@ export async function getMRPreviewDetails(mrId: number) {
     totalWithVat: subtotal * 1.05,
   };
 }
-// 4. Fetch Hierarchical Structural Data (Fixed BOQ Tab Recursion Crash)
-export async function getCostAnalysisTree(projectId: string = '1', type: 'Materials' | 'BOQ'): Promise<CostNode[]> {
+
+///////////////////////////////
+// 4. COST TREE (FIXED)
+///////////////////////////////
+export async function getCostAnalysisTree(
+  projectId: string = '1',
+  type: 'Materials' | 'BOQ'
+): Promise<CostNode[]> {
+
   if (type === 'Materials') {
     const [rows] = await pool.query<RowDataPacket[]>(`
-      SELECT mc.id, mc.parent_id, mc.name, COALESCE(SUM(li.qty * li.unit_price), 0) AS direct_spend
+      SELECT 
+        mc.id,
+        mc.parent_id,
+        mc.name,
+        COALESCE(SUM(li.qty * li.unit_price), 0) AS direct_spend
       FROM material_categories mc
       LEFT JOIN materials m ON m.category_id = mc.id
       LEFT JOIN mr_line_items li ON li.material_id = m.id
-      LEFT JOIN material_requests mr ON li.mr_id = mr.id AND mr.project_id = ?
-      GROUP BY mc.id
+      LEFT JOIN material_requests mr 
+        ON li.mr_id = mr.id AND mr.project_id = ?
+      GROUP BY mc.id, mc.parent_id, mc.name
     `, [projectId]);
 
     const treeMap = new Map<number, CostNode>();
@@ -271,58 +283,22 @@ export async function getCostAnalysisTree(projectId: string = '1', type: 'Materi
     });
 
     const rootNodes: CostNode[] = [];
+    const visited = new Set<number>();
+
     treeMap.forEach(node => {
-      if (node.parent_id === null) {
-        rootNodes.push(node);
-      } else {
-        const parent = treeMap.get(node.parent_id);
-        if (parent) parent.children.push(node);
-      }
+      if (node.parent_id === null) rootNodes.push(node);
+      else treeMap.get(node.parent_id)?.children.push(node);
     });
 
     const calculateRollup = (node: CostNode): number => {
+      if (visited.has(node.id)) return 0;
+      visited.add(node.id);
+
       let sum = node.total_spend;
-      node.children.forEach((child) => { sum += calculateRollup(child); });
-      node.total_spend = sum;
-      return sum;
-    };
-
-    rootNodes.forEach(calculateRollup);
-    return rootNodes;
-
-  } else {
-    const [rows] = await pool.query<RowDataPacket[]>(`
-      SELECT bi.id, bi.parent_id, bi.name, COALESCE((bi.qty * bi.rate), 0) AS total_spend
-      FROM boq_items bi
-      JOIN boqs b ON bi.boq_id = b.id
-      WHERE b.project_id = ?
-    `, [projectId]);
-
-    const treeMap = new Map<number, CostNode>();
-    rows.forEach(r => {
-      treeMap.set(r.id, {
-        id: Number(r.id),
-        parent_id: r.parent_id ? Number(r.parent_id) : null,
-        name: String(r.name),
-        direct_spend: Number(r.total_spend),
-        total_spend: Number(r.total_spend),
-        children: []
+      node.children.forEach(child => {
+        sum += calculateRollup(child);
       });
-    });
 
-    const rootNodes: CostNode[] = [];
-    treeMap.forEach(node => {
-      if (node.parent_id === null) {
-        rootNodes.push(node);
-      } else {
-        const parent = treeMap.get(node.parent_id);
-        if (parent) parent.children.push(node);
-      }
-    });
-
-    const calculateRollup = (node: CostNode): number => {
-      let sum = node.total_spend;
-      node.children.forEach((child) => { sum += calculateRollup(child); });
       node.total_spend = sum;
       return sum;
     };
@@ -330,41 +306,88 @@ export async function getCostAnalysisTree(projectId: string = '1', type: 'Materi
     rootNodes.forEach(calculateRollup);
     return rootNodes;
   }
+
+  // BOQ branch unchanged (safe)
+  const [rows] = await pool.query<RowDataPacket[]>(`
+    SELECT bi.id, bi.parent_id, bi.name,
+           COALESCE((bi.qty * bi.rate), 0) AS total_spend
+    FROM boq_items bi
+    JOIN boqs b ON bi.boq_id = b.id
+    WHERE b.project_id = ?
+  `, [projectId]);
+
+  const treeMap = new Map<number, CostNode>();
+  rows.forEach(r => {
+    treeMap.set(r.id, {
+      id: Number(r.id),
+      parent_id: r.parent_id ? Number(r.parent_id) : null,
+      name: String(r.name),
+      direct_spend: Number(r.total_spend),
+      total_spend: Number(r.total_spend),
+      children: []
+    });
+  });
+
+  const rootNodes: CostNode[] = [];
+  treeMap.forEach(node => {
+    if (node.parent_id === null) rootNodes.push(node);
+    else treeMap.get(node.parent_id)?.children.push(node);
+  });
+
+  const calculateRollup = (node: CostNode): number => {
+    let sum = node.total_spend;
+    node.children.forEach(child => sum += calculateRollup(child));
+    node.total_spend = sum;
+    return sum;
+  };
+
+  rootNodes.forEach(calculateRollup);
+  return rootNodes;
 }
 
-// 5. Add Custom Tag to Selected MRs
+///////////////////////////////
+// 5. TAG INSERT
+///////////////////////////////
 export async function addTagToMR(mrId: number, tagName: string) {
-  const [existingTag] = await pool.query<RowDataPacket[]>('SELECT id FROM tags WHERE name = ?', [tagName]);
+  const [existingTag] = await pool.query<RowDataPacket[]>(
+    'SELECT id FROM tags WHERE name = ?',
+    [tagName]
+  );
+
   let tagId: number;
 
   if (existingTag.length > 0) {
     tagId = existingTag[0].id;
   } else {
-    const [newTag] = await pool.query<ResultSetHeader>('INSERT INTO tags (name) VALUES (?)', [tagName]);
+    const [newTag] = await pool.query<ResultSetHeader>(
+      'INSERT INTO tags (name) VALUES (?)',
+      [tagName]
+    );
     tagId = newTag.insertId;
   }
 
-  await pool.query('INSERT IGNORE INTO mr_tags (mr_id, tag_id) VALUES (?, ?)', [mrId, tagId]);
+  await pool.query(
+    'INSERT IGNORE INTO mr_tags (mr_id, tag_id) VALUES (?, ?)',
+    [mrId, tagId]
+  );
+
   return { success: true };
 }
 
+///////////////////////////////
+// 6. REVENUE ITEMS
+///////////////////////////////
 export async function getRevenueItems(projectId: string = "1") {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `
+  const [rows] = await pool.query<RowDataPacket[]>(`
     SELECT
       b.id,
-      SUM(
-        COALESCE(bi.qty,0) * COALESCE(bi.rate,0)
-      ) AS total_value
+      SUM(COALESCE(bi.qty,0) * COALESCE(bi.rate,0)) AS total_value
     FROM boqs b
-    LEFT JOIN boq_items bi
-      ON bi.boq_id = b.id
+    LEFT JOIN boq_items bi ON bi.boq_id = b.id
     WHERE b.project_id = ?
     GROUP BY b.id
     ORDER BY b.id
-    `,
-    [projectId]
-  );
+  `, [projectId]);
 
   return rows.map((row) => ({
     id: row.id,
@@ -372,24 +395,24 @@ export async function getRevenueItems(projectId: string = "1") {
     total_value: Number(row.total_value || 0),
   }));
 }
+
+///////////////////////////////
+// 7. PROJECT CONTEXT
+///////////////////////////////
 export async function getProjectContext(projectId: string = '1') {
   const [rows] = await pool.query<RowDataPacket[]>(`
     SELECT name AS project_name FROM projects WHERE id = ?
   `, [projectId]);
 
-  // Calculate dates: Today and 7 days ago
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - 7);
 
-  const formatDate = (d: Date) => 
+  const formatDate = (d: Date) =>
     d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }).toUpperCase();
 
   return {
     projectName: rows[0]?.project_name || 'Unknown Project',
-    // Example: "APR 08 - APR 15, 2026"
     reportingPeriod: `${formatDate(start)} - ${formatDate(end)}, ${end.getFullYear()}`
   };
-
-  
 }
