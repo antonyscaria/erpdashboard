@@ -70,6 +70,7 @@ export async function getMaterialRequests(
   projectId: string = '1',
   filters: any = {}
 ) {
+
   let query = `
 SELECT 
   mr.id,
@@ -83,29 +84,23 @@ SELECT
   r.name AS requestor_name,
   s.name AS supplier_name,
 
-  COALESCE(li_data.subtotal, 0) AS subtotal,
-  COALESCE(tag_data.tag_list, '') AS tag_list,
+  COALESCE(li.subtotal, 0) AS subtotal,
+  COALESCE(tags.tag_list, '') AS tag_list,
 
-  EXISTS (
-    SELECT 1
-    FROM mr_line_items li2
-    JOIN boq_items bi ON li2.boq_item_id = bi.id
-    WHERE li2.mr_id = mr.id
-    HAVING SUM(li2.qty * li2.unit_price) > SUM(bi.qty * bi.rate)
-  ) AS is_overrun
+  COALESCE(overrun.is_overrun, 0) AS is_overrun
 
 FROM material_requests mr
 JOIN requestors r ON mr.requestor_id = r.id
 JOIN suppliers s ON mr.supplier_id = s.id
 
+/* SUBTOTAL (no GROUP BY in main query) */
 LEFT JOIN (
-  SELECT 
-    mr_id,
-    SUM(qty * unit_price) AS subtotal
+  SELECT mr_id, SUM(qty * unit_price) AS subtotal
   FROM mr_line_items
   GROUP BY mr_id
-) li_data ON li_data.mr_id = mr.id
+) li ON li.mr_id = mr.id
 
+/* TAGS */
 LEFT JOIN (
   SELECT 
     mt.mr_id,
@@ -113,7 +108,20 @@ LEFT JOIN (
   FROM mr_tags mt
   JOIN tags t ON mt.tag_id = t.id
   GROUP BY mt.mr_id
-) tag_data ON tag_data.mr_id = mr.id
+) tags ON tags.mr_id = mr.id
+
+/* OVERRUN CHECK */
+LEFT JOIN (
+  SELECT 
+    li2.mr_id,
+    CASE 
+      WHEN SUM(li2.qty * li2.unit_price) > SUM(bi.qty * bi.rate)
+      THEN 1 ELSE 0
+    END AS is_overrun
+  FROM mr_line_items li2
+  JOIN boq_items bi ON li2.boq_item_id = bi.id
+  GROUP BY li2.mr_id
+) overrun ON overrun.mr_id = mr.id
 
 WHERE mr.project_id = ?
 `;
@@ -165,7 +173,6 @@ WHERE mr.project_id = ?
     };
   });
 }
-
 ///////////////////////////////
 // 3. MR PREVIEW
 ///////////////////////////////
