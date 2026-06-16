@@ -152,37 +152,20 @@ CREATE TABLE `mr_line_items` (
   `unit_price` decimal(12,2) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `mr_line_items`
---
-
 INSERT INTO `mr_line_items` (`id`, `mr_id`, `material_id`, `boq_item_id`, `qty`, `unit`, `unit_price`) VALUES
 (1, 1, 1, 3, 100.00, 'SQM', 10.00),
 (2, 2, 2, 3, 20.00, 'No', 25.00);
 
--- --------------------------------------------------------
-
---
--- Table structure for table `mr_tags`
---
 
 CREATE TABLE `mr_tags` (
   `mr_id` int(11) NOT NULL,
   `tag_id` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `mr_tags`
---
 
 INSERT INTO `mr_tags` (`mr_id`, `tag_id`) VALUES
 (2, 1);
 
--- --------------------------------------------------------
-
---
--- Table structure for table `price_history`
---
 
 CREATE TABLE `price_history` (
   `id` int(11) NOT NULL,
@@ -192,11 +175,6 @@ CREATE TABLE `price_history` (
   `quoted_at` date NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- --------------------------------------------------------
-
---
--- Table structure for table `projects`
---
 
 CREATE TABLE `projects` (
   `id` int(11) NOT NULL,
@@ -207,18 +185,10 @@ CREATE TABLE `projects` (
   `budget` decimal(12,2) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `projects`
---
 
 INSERT INTO `projects` (`id`, `name`, `area_sqm`, `location`, `scope`, `budget`) VALUES
 (1, 'Private Villa, Test', 12000, 'Dubai, UAE', 'Interior Fit Out', 100000.00);
 
--- --------------------------------------------------------
-
---
--- Table structure for table `requestors`
---
 
 CREATE TABLE `requestors` (
   `id` int(11) NOT NULL,
@@ -226,18 +196,11 @@ CREATE TABLE `requestors` (
   `department` varchar(120) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `requestors`
---
 
 INSERT INTO `requestors` (`id`, `name`, `department`) VALUES
 (1, 'Shinto Antony', 'Joinery Works');
 
--- --------------------------------------------------------
 
---
--- Table structure for table `suppliers`
---
 
 CREATE TABLE `suppliers` (
   `id` int(11) NOT NULL,
@@ -245,69 +208,45 @@ CREATE TABLE `suppliers` (
   `location` varchar(150) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `suppliers`
---
+
 
 INSERT INTO `suppliers` (`id`, `name`, `location`) VALUES
 (1, 'Al Manara Building Materials Trading LLC', 'Dubai, UAE'),
 (2, 'Gulf Fixings & Hardware Trading LLC', 'Dubai, UAE');
 
--- --------------------------------------------------------
 
---
--- Table structure for table `tags`
---
 
 CREATE TABLE `tags` (
   `id` int(11) NOT NULL,
   `name` varchar(50) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `tags`
---
+
 
 INSERT INTO `tags` (`id`, `name`) VALUES
 (2, 'Budget overrun'),
 (1, 'Important');
 
---
--- Indexes for dumped tables
---
 
---
--- Indexes for table `boqs`
---
 ALTER TABLE `boqs`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_boq_project` (`project_id`);
 
---
--- Indexes for table `boq_items`
---
+
 ALTER TABLE `boq_items`
   ADD PRIMARY KEY (`id`),
   ADD KEY `fk_boqitem_boq` (`boq_id`),
   ADD KEY `idx_boq_parent` (`parent_id`);
 
---
--- Indexes for table `materials`
---
 ALTER TABLE `materials`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_material_category` (`category_id`);
 
---
--- Indexes for table `material_categories`
---
+
 ALTER TABLE `material_categories`
   ADD PRIMARY KEY (`id`),
   ADD KEY `fk_material_category_parent` (`parent_id`);
 
---
--- Indexes for table `material_requests`
---
 ALTER TABLE `material_requests`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `mr_number` (`mr_number`),
@@ -315,116 +254,70 @@ ALTER TABLE `material_requests`
   ADD KEY `idx_mr_supplier` (`supplier_id`),
   ADD KEY `idx_mr_requestor` (`requestor_id`);
 
---
--- Indexes for table `mr_line_items`
---
+
 ALTER TABLE `mr_line_items`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_mrline_mr` (`mr_id`),
   ADD KEY `idx_mrline_material` (`material_id`),
   ADD KEY `idx_mrline_boqitem` (`boq_item_id`);
 
---
--- Indexes for table `mr_tags`
---
+
 ALTER TABLE `mr_tags`
   ADD PRIMARY KEY (`mr_id`,`tag_id`),
   ADD KEY `fk_mrtag_tag` (`tag_id`);
 
---
--- Indexes for table `price_history`
---
+
 ALTER TABLE `price_history`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_price_material` (`material_id`),
   ADD KEY `idx_price_supplier` (`supplier_id`);
 
---
--- Indexes for table `projects`
---
 ALTER TABLE `projects`
   ADD PRIMARY KEY (`id`);
 
---
--- Indexes for table `requestors`
---
 ALTER TABLE `requestors`
   ADD PRIMARY KEY (`id`);
 
---
--- Indexes for table `suppliers`
---
+
 ALTER TABLE `suppliers`
   ADD PRIMARY KEY (`id`);
 
---
--- Indexes for table `tags`
---
 ALTER TABLE `tags`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `name` (`name`);
 
---
--- AUTO_INCREMENT for dumped tables
---
 
---
--- AUTO_INCREMENT for table `boqs`
---
 ALTER TABLE `boqs`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
---
--- AUTO_INCREMENT for table `boq_items`
---
+
 ALTER TABLE `boq_items`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
---
--- AUTO_INCREMENT for table `materials`
---
 ALTER TABLE `materials`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
---
--- AUTO_INCREMENT for table `material_categories`
---
 ALTER TABLE `material_categories`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
---
--- AUTO_INCREMENT for table `material_requests`
---
+
 ALTER TABLE `material_requests`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
---
--- AUTO_INCREMENT for table `mr_line_items`
---
 ALTER TABLE `mr_line_items`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
---
--- AUTO_INCREMENT for table `price_history`
---
+
 ALTER TABLE `price_history`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
---
--- AUTO_INCREMENT for table `projects`
---
 ALTER TABLE `projects`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
---
--- AUTO_INCREMENT for table `requestors`
---
 ALTER TABLE `requestors`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
---
--- AUTO_INCREMENT for table `suppliers`
---
+
 ALTER TABLE `suppliers`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
@@ -434,61 +327,38 @@ ALTER TABLE `suppliers`
 ALTER TABLE `tags`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
---
--- Constraints for dumped tables
---
 
---
--- Constraints for table `boqs`
---
 ALTER TABLE `boqs`
   ADD CONSTRAINT `fk_boq_project` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`) ON DELETE CASCADE;
 
---
--- Constraints for table `boq_items`
---
 ALTER TABLE `boq_items`
   ADD CONSTRAINT `fk_boqitem_boq` FOREIGN KEY (`boq_id`) REFERENCES `boqs` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `fk_boqitem_parent` FOREIGN KEY (`parent_id`) REFERENCES `boq_items` (`id`) ON DELETE CASCADE;
 
---
--- Constraints for table `materials`
---
 ALTER TABLE `materials`
   ADD CONSTRAINT `fk_material_category` FOREIGN KEY (`category_id`) REFERENCES `material_categories` (`id`);
 
---
--- Constraints for table `material_categories`
---
+
 ALTER TABLE `material_categories`
   ADD CONSTRAINT `fk_material_category_parent` FOREIGN KEY (`parent_id`) REFERENCES `material_categories` (`id`) ON DELETE CASCADE;
 
---
--- Constraints for table `material_requests`
---
+
 ALTER TABLE `material_requests`
   ADD CONSTRAINT `fk_mr_project` FOREIGN KEY (`project_id`) REFERENCES `projects` (`id`),
   ADD CONSTRAINT `fk_mr_requestor` FOREIGN KEY (`requestor_id`) REFERENCES `requestors` (`id`),
   ADD CONSTRAINT `fk_mr_supplier` FOREIGN KEY (`supplier_id`) REFERENCES `suppliers` (`id`);
 
---
--- Constraints for table `mr_line_items`
---
 ALTER TABLE `mr_line_items`
   ADD CONSTRAINT `fk_mrline_boqitem` FOREIGN KEY (`boq_item_id`) REFERENCES `boq_items` (`id`),
   ADD CONSTRAINT `fk_mrline_material` FOREIGN KEY (`material_id`) REFERENCES `materials` (`id`),
   ADD CONSTRAINT `fk_mrline_mr` FOREIGN KEY (`mr_id`) REFERENCES `material_requests` (`id`) ON DELETE CASCADE;
 
---
--- Constraints for table `mr_tags`
---
+
 ALTER TABLE `mr_tags`
   ADD CONSTRAINT `fk_mrtag_mr` FOREIGN KEY (`mr_id`) REFERENCES `material_requests` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `fk_mrtag_tag` FOREIGN KEY (`tag_id`) REFERENCES `tags` (`id`) ON DELETE CASCADE;
 
---
--- Constraints for table `price_history`
---
+
 ALTER TABLE `price_history`
   ADD CONSTRAINT `fk_price_material` FOREIGN KEY (`material_id`) REFERENCES `materials` (`id`),
   ADD CONSTRAINT `fk_price_supplier` FOREIGN KEY (`supplier_id`) REFERENCES `suppliers` (`id`);

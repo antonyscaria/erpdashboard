@@ -1,6 +1,6 @@
 // app/api/dashboard/route.ts
 import { NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { pool } from '@/lib/db';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
