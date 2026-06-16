@@ -83,22 +83,21 @@ SELECT
   s.name AS supplier_name,
 
   COALESCE(li_data.subtotal, 0) AS subtotal,
-  tag_data.tag_list,
+  COALESCE(tag_data.tag_list, '') AS tag_list,
 
   EXISTS (
-    SELECT 1 
+    SELECT 1
     FROM mr_line_items li2
     JOIN boq_items bi ON li2.boq_item_id = bi.id
-    WHERE li2.mr_id = mr.id 
-    GROUP BY li2.boq_item_id
-    HAVING SUM(li2.qty * li2.unit_price) > MAX(bi.qty * bi.rate)
+    WHERE li2.mr_id = mr.id
+      AND (li2.qty * li2.unit_price) > (bi.qty * bi.rate)
   ) AS is_overrun
 
 FROM material_requests mr
 JOIN requestors r ON mr.requestor_id = r.id
 JOIN suppliers s ON mr.supplier_id = s.id
 
-/* ✅ FIX: pre-aggregated line items */
+/* aggregated line items */
 LEFT JOIN (
   SELECT 
     mr_id,
@@ -107,11 +106,11 @@ LEFT JOIN (
   GROUP BY mr_id
 ) li_data ON li_data.mr_id = mr.id
 
-/* ✅ FIX: pre-aggregated tags */
+/* aggregated tags */
 LEFT JOIN (
   SELECT 
     mt.mr_id,
-    GROUP_CONCAT(DISTINCT t.name) AS tag_list
+    GROUP_CONCAT(DISTINCT t.name SEPARATOR ',') AS tag_list
   FROM mr_tags mt
   JOIN tags t ON mt.tag_id = t.id
   GROUP BY mt.mr_id
@@ -138,14 +137,12 @@ WHERE mr.project_id = ?
     params.push(searchWildcard, searchWildcard, searchWildcard);
   }
 
-  query += `
-ORDER BY mr.created_at DESC
-`;
+  query += ` ORDER BY mr.created_at DESC`;
 
   const [mrs] = await pool.query<RowDataPacket[]>(query, params);
 
   return mrs.map((mr) => {
-    const assignedTags = mr.tag_list ? (mr.tag_list as string).split(',') : [];
+    const assignedTags = mr.tag_list ? mr.tag_list.split(',') : [];
 
     if (mr.is_overrun && !assignedTags.includes('Budget overrun')) {
       assignedTags.push('Budget overrun');
