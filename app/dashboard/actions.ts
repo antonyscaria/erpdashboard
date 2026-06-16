@@ -65,53 +65,80 @@ export async function getDashboardMetrics(projectId: string = '1') {
 
 // 2. Fetch Material Requests with Dynamic Filters & Budget Overrun Injection
 export async function getMaterialRequests(projectId: string = '1', filters: any = {}) {
+
   let query = `
-    SELECT 
-      mr.id, mr.mr_number, mr.required_date, mr.purpose, mr.stage, mr.status, mr.created_at,
-      r.name AS requestor_name, s.name AS supplier_name,
-      COALESCE(SUM(li.qty * li.unit_price), 0) AS subtotal,
-      GROUP_CONCAT(t.name) AS tag_list,
-      EXISTS (
-        SELECT 1 
-        FROM mr_line_items li2
-        JOIN boq_items bi ON li2.boq_item_id = bi.id
-        WHERE li2.mr_id = mr.id 
-        GROUP BY li2.boq_item_id
-        HAVING SUM(li2.qty * li2.unit_price) > MAX(bi.qty * bi.rate)
-      ) AS is_overrun
-    FROM material_requests mr
-    JOIN requestors r ON mr.requestor_id = r.id
-    JOIN suppliers s ON mr.supplier_id = s.id
-    LEFT JOIN mr_line_items li ON li.mr_id = mr.id
-    LEFT JOIN mr_tags mt ON mr.id = mt.mr_id
-    LEFT JOIN tags t ON mt.tag_id = t.id
-    WHERE mr.project_id = ?
-  `;
-  
+SELECT 
+  mr.id,
+  mr.mr_number,
+  mr.required_date,
+  mr.purpose,
+  mr.stage,
+  mr.status,
+  mr.created_at,
+
+  r.name AS requestor_name,
+  s.name AS supplier_name,
+
+  COALESCE(SUM(li.qty * li.unit_price), 0) AS subtotal,
+
+  GROUP_CONCAT(DISTINCT t.name) AS tag_list,
+
+  EXISTS (
+    SELECT 1 
+    FROM mr_line_items li2
+    JOIN boq_items bi ON li2.boq_item_id = bi.id
+    WHERE li2.mr_id = mr.id 
+    GROUP BY li2.boq_item_id
+    HAVING SUM(li2.qty * li2.unit_price) > MAX(bi.qty * bi.rate)
+  ) AS is_overrun
+
+FROM material_requests mr
+JOIN requestors r ON mr.requestor_id = r.id
+JOIN suppliers s ON mr.supplier_id = s.id
+LEFT JOIN mr_line_items li ON li.mr_id = mr.id
+LEFT JOIN mr_tags mt ON mr.id = mt.mr_id
+LEFT JOIN tags t ON mt.tag_id = t.id
+
+WHERE mr.project_id = ?
+`;
+
   const params: any[] = [projectId];
 
   if (filters.status && filters.status !== 'Paid & Unpaid') {
     query += ` AND mr.status = ?`;
     params.push(filters.status);
   }
+
   if (filters.requestor && filters.requestor !== 'All Requestor') {
     query += ` AND r.name = ?`;
     params.push(filters.requestor);
   }
+
   if (filters.searchQuery) {
     query += ` AND (mr.mr_number LIKE ? OR r.name LIKE ? OR mr.purpose LIKE ?)`;
     const searchWildcard = `%${filters.searchQuery}%`;
     params.push(searchWildcard, searchWildcard, searchWildcard);
   }
 
-  query += ` GROUP BY mr.id ORDER BY mr.created_at DESC`;
+  query += `
+GROUP BY 
+  mr.id,
+  mr.mr_number,
+  mr.required_date,
+  mr.purpose,
+  mr.stage,
+  mr.status,
+  mr.created_at,
+  r.name,
+  s.name
+ORDER BY mr.created_at DESC
+`;
 
-  // Single query execution
   const [mrs] = await pool.query<RowDataPacket[]>(query, params);
 
   return mrs.map((mr) => {
     const assignedTags = mr.tag_list ? (mr.tag_list as string).split(',') : [];
-    
+
     if (mr.is_overrun && !assignedTags.includes('Budget overrun')) {
       assignedTags.push('Budget overrun');
     }
@@ -135,35 +162,55 @@ export async function getMaterialRequests(projectId: string = '1', filters: any 
 
 // 3. Fetch Selected Material Request Details (Optimized: Removed N+1 Query loop)
 export async function getMRPreviewDetails(mrId: number) {
+
   const [mrMeta] = await pool.query<RowDataPacket[]>(`
-    SELECT mr.mr_number, mr.stage, r.name AS requestor_name, s.name AS supplier_name
+    SELECT 
+      mr.mr_number,
+      mr.stage,
+      mr.required_date,
+      r.name AS requestor_name,
+      s.name AS supplier_name
     FROM material_requests mr
     JOIN requestors r ON mr.requestor_id = r.id
     JOIN suppliers s ON mr.supplier_id = s.id
     WHERE mr.id = ?
   `, [mrId]);
 
-  // Combined metrics calculation step to achieve strict O(1) query runtimes
   const [lineItems] = await pool.query<RowDataPacket[]>(`
     SELECT 
-      li.id, m.name AS material_description, li.qty, li.unit, li.unit_price, 
-      (li.qty * li.unit_price) AS total_price, bi.ref_code AS boq_ref,
-      (SELECT MIN(price) FROM price_history WHERE material_id = m.id) as lowest_price,
-      (SELECT AVG(price) FROM price_history WHERE material_id = m.id) as avg_price,
-      (SELECT ph.price FROM price_history ph 
-       WHERE ph.material_id = m.id AND ph.quoted_at < mr.required_date 
-       ORDER BY ph.quoted_at DESC LIMIT 1) as prev_price
+      li.id,
+      m.name AS material_description,
+      li.qty,
+      li.unit,
+      li.unit_price,
+      (li.qty * li.unit_price) AS total_price,
+      bi.ref_code AS boq_ref,
+
+      MIN(ph.price) OVER (PARTITION BY m.id) AS lowest_price,
+      AVG(ph.price) OVER (PARTITION BY m.id) AS avg_price,
+
+      (
+        SELECT ph2.price
+        FROM price_history ph2
+        WHERE ph2.material_id = m.id
+          AND ph2.quoted_at < mr.required_date
+        ORDER BY ph2.quoted_at DESC
+        LIMIT 1
+      ) AS prev_price
+
     FROM mr_line_items li
     JOIN material_requests mr ON li.mr_id = mr.id
     JOIN materials m ON li.material_id = m.id
     JOIN boq_items bi ON li.boq_item_id = bi.id
+    LEFT JOIN price_history ph ON ph.material_id = m.id
+
     WHERE li.mr_id = ?
   `, [mrId]);
 
   const enrichedItems = lineItems.map((item) => ({
     id: item.id,
     description: item.material_description,
-    qty: item.qty,
+    qty: Number(item.qty),
     unit: item.unit,
     unit_price: Number(item.unit_price),
     total_price: Number(item.total_price),
@@ -182,7 +229,6 @@ export async function getMRPreviewDetails(mrId: number) {
     totalWithVat: subtotal * 1.05,
   };
 }
-
 // 4. Fetch Hierarchical Structural Data (Fixed BOQ Tab Recursion Crash)
 export async function getCostAnalysisTree(projectId: string = '1', type: 'Materials' | 'BOQ'): Promise<CostNode[]> {
   if (type === 'Materials') {
