@@ -64,7 +64,10 @@ export async function getDashboardMetrics(projectId: string = '1') {
 }
 
 ///////////////////////////////
-// 2. MATERIAL REQUESTS
+// 2. MATERIAL REQUESTS (FIXED FOR ONLY_FULL_GROUP_BY)
+///////////////////////////////
+///////////////////////////////
+// 2. MATERIAL REQUESTS (UNIVERSAL SQL VERSION)
 ///////////////////////////////
 export async function getMaterialRequests(
   projectId: string = '1',
@@ -74,26 +77,25 @@ export async function getMaterialRequests(
   let query = `
 SELECT 
   mr.id,
-  mr.mr_number,
-  mr.required_date,
-  mr.purpose,
-  mr.stage,
-  mr.status,
-  mr.created_at,
+  MAX(mr.mr_number) AS mr_number,
+  MAX(mr.required_date) AS required_date,
+  MAX(mr.purpose) AS purpose,
+  MAX(mr.stage) AS stage,
+  MAX(mr.status) AS status,
+  MAX(mr.created_at) AS created_at,
 
-  r.name AS requestor_name,
-  s.name AS supplier_name,
+  MAX(r.name) AS requestor_name,
+  MAX(s.name) AS supplier_name,
 
   COALESCE(li.subtotal, 0) AS subtotal,
   COALESCE(tags.tag_list, '') AS tag_list,
-
   COALESCE(overrun.is_overrun, 0) AS is_overrun
 
 FROM material_requests mr
 JOIN requestors r ON mr.requestor_id = r.id
 JOIN suppliers s ON mr.supplier_id = s.id
 
-/* SUBTOTAL (no GROUP BY in main query) */
+/* SUBTOTAL */
 LEFT JOIN (
   SELECT mr_id, SUM(qty * unit_price) AS subtotal
   FROM mr_line_items
@@ -124,6 +126,7 @@ LEFT JOIN (
 ) overrun ON overrun.mr_id = mr.id
 
 WHERE mr.project_id = ?
+GROUP BY mr.id, li.subtotal, tags.tag_list, overrun.is_overrun
 `;
 
   const params: any[] = [projectId];
@@ -144,7 +147,8 @@ WHERE mr.project_id = ?
     params.push(s, s, s);
   }
 
-  query += ` ORDER BY mr.created_at DESC`;
+  // Use the grouped aggregation inside the ORDER BY to align with strict engines
+  query += ` ORDER BY MAX(mr.created_at) DESC`;
 
   const [mrs] = await pool.query<RowDataPacket[]>(query, params);
 
@@ -175,7 +179,7 @@ WHERE mr.project_id = ?
 }
 
 ///////////////////////////////
-// 3. MR PREVIEW (FIXED COUPLING)
+// 3. MR PREVIEW
 ///////////////////////////////
 export async function getMRPreviewDetails(mrId: number) {
   const [mrMeta] = await pool.query<RowDataPacket[]>(`
@@ -216,7 +220,6 @@ export async function getMRPreviewDetails(mrId: number) {
       (
         SELECT ph2.price
         FROM price_history ph2
-        /* Explicitly bound via join context back to parent root MR */
         JOIN material_requests inner_mr ON inner_mr.id = li.mr_id
         WHERE ph2.material_id = m.id
           AND ph2.quoted_at < inner_mr.required_date
@@ -258,7 +261,7 @@ export async function getMRPreviewDetails(mrId: number) {
 }
 
 ///////////////////////////////
-// 4. COST TREE (FIXED GROUP BY)
+// 4. COST TREE
 ///////////////////////////////
 export async function getCostAnalysisTree(
   projectId: string = '1',
@@ -266,7 +269,6 @@ export async function getCostAnalysisTree(
 ): Promise<CostNode[]> {
 
   if (type === 'Materials') {
-    // Fixed only_full_group_by compatibility by isolating line items breakdown in an independent sub-aggregation block
     const [rows] = await pool.query<RowDataPacket[]>(`
       SELECT 
         mc.id,
