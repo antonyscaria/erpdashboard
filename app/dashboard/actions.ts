@@ -173,8 +173,9 @@ WHERE mr.project_id = ?
     };
   });
 }
+
 ///////////////////////////////
-// 3. MR PREVIEW
+// 3. MR PREVIEW (FIXED COUPLING)
 ///////////////////////////////
 export async function getMRPreviewDetails(mrId: number) {
   const [mrMeta] = await pool.query<RowDataPacket[]>(`
@@ -215,8 +216,10 @@ export async function getMRPreviewDetails(mrId: number) {
       (
         SELECT ph2.price
         FROM price_history ph2
+        /* Explicitly bound via join context back to parent root MR */
+        JOIN material_requests inner_mr ON inner_mr.id = li.mr_id
         WHERE ph2.material_id = m.id
-          AND ph2.quoted_at < mr.required_date
+          AND ph2.quoted_at < inner_mr.required_date
         ORDER BY ph2.quoted_at DESC
         LIMIT 1
       ) AS prev_price
@@ -255,7 +258,7 @@ export async function getMRPreviewDetails(mrId: number) {
 }
 
 ///////////////////////////////
-// 4. COST TREE (FIXED)
+// 4. COST TREE (FIXED GROUP BY)
 ///////////////////////////////
 export async function getCostAnalysisTree(
   projectId: string = '1',
@@ -263,18 +266,22 @@ export async function getCostAnalysisTree(
 ): Promise<CostNode[]> {
 
   if (type === 'Materials') {
+    // Fixed only_full_group_by compatibility by isolating line items breakdown in an independent sub-aggregation block
     const [rows] = await pool.query<RowDataPacket[]>(`
       SELECT 
         mc.id,
         mc.parent_id,
         mc.name,
-        COALESCE(SUM(li.qty * li.unit_price), 0) AS direct_spend
+        COALESCE(spend_data.direct_spend, 0) AS direct_spend
       FROM material_categories mc
-      LEFT JOIN materials m ON m.category_id = mc.id
-      LEFT JOIN mr_line_items li ON li.material_id = m.id
-      LEFT JOIN material_requests mr 
-        ON li.mr_id = mr.id AND mr.project_id = ?
-      GROUP BY mc.id, mc.parent_id, mc.name
+      LEFT JOIN (
+        SELECT m.category_id, SUM(li.qty * li.unit_price) AS direct_spend
+        FROM mr_line_items li
+        JOIN materials m ON li.material_id = m.id
+        JOIN material_requests mr ON li.mr_id = mr.id
+        WHERE mr.project_id = ?
+        GROUP BY m.category_id
+      ) spend_data ON spend_data.category_id = mc.id
     `, [projectId]);
 
     const treeMap = new Map<number, CostNode>();
@@ -314,7 +321,7 @@ export async function getCostAnalysisTree(
     return rootNodes;
   }
 
-  // BOQ branch unchanged (safe)
+  // BOQ branch
   const [rows] = await pool.query<RowDataPacket[]>(`
     SELECT bi.id, bi.parent_id, bi.name,
            COALESCE((bi.qty * bi.rate), 0) AS total_spend
