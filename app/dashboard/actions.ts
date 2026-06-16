@@ -131,6 +131,7 @@ GROUP BY
   mr.created_at,
   r.name,
   s.name
+
 ORDER BY mr.created_at DESC
 `;
 
