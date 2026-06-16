@@ -67,88 +67,92 @@ export async function getDashboardMetrics(projectId: string = '1') {
 // 2. MATERIAL REQUESTS (FIXED FOR ONLY_FULL_GROUP_BY)
 ///////////////////////////////
 ///////////////////////////////
-// 2. MATERIAL REQUESTS (UNIVERSAL SQL VERSION)
+// 2. MATERIAL REQUESTS (BULLETPROOF SUBQUERY VERSION)
 ///////////////////////////////
 export async function getMaterialRequests(
   projectId: string = '1',
   filters: any = {}
 ) {
 
-  let query = `
-SELECT 
-  mr.id,
-  MAX(mr.mr_number) AS mr_number,
-  MAX(mr.required_date) AS required_date,
-  MAX(mr.purpose) AS purpose,
-  MAX(mr.stage) AS stage,
-  MAX(mr.status) AS status,
-  MAX(mr.created_at) AS created_at,
-
-  MAX(r.name) AS requestor_name,
-  MAX(s.name) AS supplier_name,
-
-  COALESCE(li.subtotal, 0) AS subtotal,
-  COALESCE(tags.tag_list, '') AS tag_list,
-  COALESCE(overrun.is_overrun, 0) AS is_overrun
-
-FROM material_requests mr
-JOIN requestors r ON mr.requestor_id = r.id
-JOIN suppliers s ON mr.supplier_id = s.id
-
-/* SUBTOTAL */
-LEFT JOIN (
-  SELECT mr_id, SUM(qty * unit_price) AS subtotal
-  FROM mr_line_items
-  GROUP BY mr_id
-) li ON li.mr_id = mr.id
-
-/* TAGS */
-LEFT JOIN (
-  SELECT 
-    mt.mr_id,
-    GROUP_CONCAT(DISTINCT t.name SEPARATOR ',') AS tag_list
-  FROM mr_tags mt
-  JOIN tags t ON mt.tag_id = t.id
-  GROUP BY mt.mr_id
-) tags ON tags.mr_id = mr.id
-
-/* OVERRUN CHECK */
-LEFT JOIN (
-  SELECT 
-    li2.mr_id,
-    CASE 
-      WHEN SUM(li2.qty * li2.unit_price) > SUM(bi.qty * bi.rate)
-      THEN 1 ELSE 0
-    END AS is_overrun
-  FROM mr_line_items li2
-  JOIN boq_items bi ON li2.boq_item_id = bi.id
-  GROUP BY li2.mr_id
-) overrun ON overrun.mr_id = mr.id
-
-WHERE mr.project_id = ?
-GROUP BY mr.id, li.subtotal, tags.tag_list, overrun.is_overrun
-`;
-
+  // Step 1: Dynamic filtering applied directly on core matching tables
+  let whereClause = `WHERE mr.project_id = ?`;
   const params: any[] = [projectId];
 
   if (filters.status && filters.status !== 'Paid & Unpaid') {
-    query += ` AND mr.status = ?`;
+    whereClause += ` AND mr.status = ?`;
     params.push(filters.status);
   }
 
   if (filters.requestor && filters.requestor !== 'All Requestor') {
-    query += ` AND r.name = ?`;
+    whereClause += ` AND r.name = ?`;
     params.push(filters.requestor);
   }
 
   if (filters.searchQuery) {
-    query += ` AND (mr.mr_number LIKE ? OR r.name LIKE ? OR mr.purpose LIKE ?)`;
+    whereClause += ` AND (mr.mr_number LIKE ? OR r.name LIKE ? OR mr.purpose LIKE ?)`;
     const s = `%${filters.searchQuery}%`;
     params.push(s, s, s);
   }
 
-  // Use the grouped aggregation inside the ORDER BY to align with strict engines
-  query += ` ORDER BY MAX(mr.created_at) DESC`;
+  // Step 2: Main Query completely isolates joins away from grouping dependencies
+  const query = `
+    SELECT 
+      mr.id,
+      mr.mr_number,
+      mr.required_date,
+      mr.purpose,
+      mr.stage,
+      mr.status,
+      mr.created_at,
+      r.name AS requestor_name,
+      s.name AS supplier_name,
+      COALESCE(li.subtotal, 0) AS subtotal,
+      COALESCE(tags.tag_list, '') AS tag_list,
+      COALESCE(overrun.is_overrun, 0) AS is_overrun
+    FROM (
+      /* Driver query: fetches isolated IDs strictly adhering to your filters */
+      SELECT mr.id 
+      FROM material_requests mr
+      JOIN requestors r ON mr.requestor_id = r.id
+      ${whereClause}
+    ) driver
+    /* Now join everything cleanly at a 1-to-1 matching row layer */
+    JOIN material_requests mr ON mr.id = driver.id
+    JOIN requestors r ON mr.requestor_id = r.id
+    JOIN suppliers s ON mr.supplier_id = s.id
+
+    /* SUBTOTAL */
+    LEFT JOIN (
+      SELECT mr_id, SUM(qty * unit_price) AS subtotal
+      FROM mr_line_items
+      GROUP BY mr_id
+    ) li ON li.mr_id = mr.id
+
+    /* TAGS */
+    LEFT JOIN (
+      SELECT 
+        mt.mr_id,
+        GROUP_CONCAT(DISTINCT t.name SEPARATOR ',') AS tag_list
+      FROM mr_tags mt
+      JOIN tags t ON mt.tag_id = t.id
+      GROUP BY mt.mr_id
+    ) tags ON tags.mr_id = mr.id
+
+    /* OVERRUN CHECK */
+    LEFT JOIN (
+      SELECT 
+        li2.mr_id,
+        CASE 
+          WHEN SUM(li2.qty * li2.unit_price) > SUM(bi.qty * bi.rate)
+          THEN 1 ELSE 0
+        END AS is_overrun
+      FROM mr_line_items li2
+      JOIN boq_items bi ON li2.boq_item_id = bi.id
+      GROUP BY li2.mr_id
+    ) overrun ON overrun.mr_id = mr.id
+
+    ORDER BY mr.created_at DESC
+  `;
 
   const [mrs] = await pool.query<RowDataPacket[]>(query, params);
 
@@ -177,7 +181,6 @@ GROUP BY mr.id, li.subtotal, tags.tag_list, overrun.is_overrun
     };
   });
 }
-
 ///////////////////////////////
 // 3. MR PREVIEW
 ///////////////////////////////
