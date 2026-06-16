@@ -64,7 +64,10 @@ export async function getDashboardMetrics(projectId: string = '1') {
 }
 
 // 2. Fetch Material Requests with Dynamic Filters & Budget Overrun Injection
-export async function getMaterialRequests(projectId: string = '1', filters: any = {}) {
+export async function getMaterialRequests(
+  projectId: string = '1',
+  filters: any = {}
+) {
 
   let query = `
 SELECT 
@@ -79,9 +82,8 @@ SELECT
   r.name AS requestor_name,
   s.name AS supplier_name,
 
-  COALESCE(SUM(li.qty * li.unit_price), 0) AS subtotal,
-
-  GROUP_CONCAT(DISTINCT t.name) AS tag_list,
+  COALESCE(li_data.subtotal, 0) AS subtotal,
+  tag_data.tag_list,
 
   EXISTS (
     SELECT 1 
@@ -95,9 +97,25 @@ SELECT
 FROM material_requests mr
 JOIN requestors r ON mr.requestor_id = r.id
 JOIN suppliers s ON mr.supplier_id = s.id
-LEFT JOIN mr_line_items li ON li.mr_id = mr.id
-LEFT JOIN mr_tags mt ON mr.id = mt.mr_id
-LEFT JOIN tags t ON mt.tag_id = t.id
+
+/* ✅ FIX: pre-aggregated line items */
+LEFT JOIN (
+  SELECT 
+    mr_id,
+    SUM(qty * unit_price) AS subtotal
+  FROM mr_line_items
+  GROUP BY mr_id
+) li_data ON li_data.mr_id = mr.id
+
+/* ✅ FIX: pre-aggregated tags */
+LEFT JOIN (
+  SELECT 
+    mt.mr_id,
+    GROUP_CONCAT(DISTINCT t.name) AS tag_list
+  FROM mr_tags mt
+  JOIN tags t ON mt.tag_id = t.id
+  GROUP BY mt.mr_id
+) tag_data ON tag_data.mr_id = mr.id
 
 WHERE mr.project_id = ?
 `;
@@ -121,17 +139,6 @@ WHERE mr.project_id = ?
   }
 
   query += `
-GROUP BY 
-  mr.id,
-  mr.mr_number,
-  mr.required_date,
-  mr.purpose,
-  mr.stage,
-  mr.status,
-  mr.created_at,
-  r.name,
-  s.name
-
 ORDER BY mr.created_at DESC
 `;
 
@@ -160,7 +167,6 @@ ORDER BY mr.created_at DESC
     };
   });
 }
-
 // 3. Fetch Selected Material Request Details (Optimized: Removed N+1 Query loop)
 export async function getMRPreviewDetails(mrId: number) {
 
