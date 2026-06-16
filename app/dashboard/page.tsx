@@ -25,10 +25,6 @@ export default async function DashboardRootPage({ searchParams }: { searchParams
   // 2. Pass the data as props
   return (
     <DashboardClientLayout 
-      initialMetrics={metrics}
-      initialMRs={materialRequests}  
-      initialTree={costTree}
-      initialContext={context}
     />
   );
 }
