@@ -187,8 +187,18 @@ export async function getMRPreviewDetails(mrId: number) {
       (li.qty * li.unit_price) AS total_price,
       bi.ref_code AS boq_ref,
 
-      MIN(ph.price) OVER (PARTITION BY m.id) AS lowest_price,
-      AVG(ph.price) OVER (PARTITION BY m.id) AS avg_price,
+      -- safer + faster aggregation (no window function duplication)
+      (
+        SELECT MIN(price)
+        FROM price_history ph
+        WHERE ph.material_id = m.id
+      ) AS lowest_price,
+
+      (
+        SELECT AVG(price)
+        FROM price_history ph
+        WHERE ph.material_id = m.id
+      ) AS avg_price,
 
       (
         SELECT ph2.price
@@ -203,7 +213,6 @@ export async function getMRPreviewDetails(mrId: number) {
     JOIN material_requests mr ON li.mr_id = mr.id
     JOIN materials m ON li.material_id = m.id
     JOIN boq_items bi ON li.boq_item_id = bi.id
-    LEFT JOIN price_history ph ON ph.material_id = m.id
 
     WHERE li.mr_id = ?
   `, [mrId]);
@@ -216,12 +225,16 @@ export async function getMRPreviewDetails(mrId: number) {
     unit_price: Number(item.unit_price),
     total_price: Number(item.total_price),
     boq_ref: item.boq_ref,
+
     lowest: item.lowest_price ? `AED ${Number(item.lowest_price).toFixed(2)}` : 'N/A',
     avg: item.avg_price ? `AED ${Number(item.avg_price).toFixed(2)}` : 'N/A',
     prev: item.prev_price ? `AED ${Number(item.prev_price).toFixed(2)}` : 'N/A',
   }));
 
-  const subtotal = enrichedItems.reduce((acc, curr) => acc + curr.total_price, 0);
+  const subtotal = enrichedItems.reduce(
+    (acc, curr) => acc + (curr.total_price || 0),
+    0
+  );
 
   return {
     metadata: mrMeta[0] || null,
